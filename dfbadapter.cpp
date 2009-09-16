@@ -96,6 +96,7 @@ struct MyObject : NPObject {
   /*should be removed end*/
 	bool 			window_received;
 	pthread_t		dfb_event_listener_tid;
+	pid_t			dfb_prog_pid;
 	char			dfb_primarymem_name[50];
  	int				plugin_socket_fd;
 	char			dfb_socket_name[50];
@@ -155,6 +156,8 @@ int MyObject::exec_dfb_program(int argc, char **argv)
 			return -1;
 		}
 	}
+
+	dfb_prog_pid = pid;
 	
 	return 0;
 }
@@ -294,39 +297,38 @@ void MyObject::start_dfb_event_listener_thread()
 MyObject::MyObject(NPP i)
 :	instance(i),
 	window_received(false),
+	dfb_prog_pid(-1),
 	plugin_socket_fd(-1),
 	dfbmem_mapped(false),
 	draw_serial_listener(0),
 	draw_serial_handler(0),
 	input_fifo_fd(-1)
 {
-	sprintf(plugin_socket_name, "/tmp/shm/dfbadapter-plugin");
-	sprintf(dfb_socket_name, "/tmp/shm/dfbadapter-dfb");
-	sprintf(dfb_primarymem_name, "/tmp/shm/dfbadapter.mem");
-	sprintf(input_fifo_name, "/tmp/shm/dfbadapter-input");
-
-	/*unlink(input_fifo_name);
-	if (0 != mkfifo(input_fifo_name, 0666))
-		perror("mkfifo /tmp/shm/dfbadapter-input failed \n");
-	input_fifo_fd = open(input_fifo_name, O_WRONLY);
-	if (input_fifo_fd < 0)
-		perror("open /tmp/shm/dfbadapter-input failed\n");
-	printf("plugin:		input fifo opened for write\n");*/
 	
-	unlink(input_fifo_name);
-
-	unlink(dfb_primarymem_name);
-	// Start dfb program
+	// Start dfb program 
+	// TODO : Now this is ugly hardcoded, we MUST get dfb program args in a general way 
+	// (ie. from mojo js code via npruntime)
 	/*if (strlen(dfbprogram))
 		char *argv[] = {dfbprogram};
 	else*/
 	char *argv[] = {"dfbterm","--size=40x20","--fontsize=15", NULL};
-	//char *argv[] = {"df_window", NULL};
 	myprintf("dfbprogram: %s", argv[0]);
+	
+	// TODO: add error handling while exec_dfb_program return failed
 	int err = exec_dfb_program(4, argv);
 
+	//allocate resouces name used to communicate between dfbadpter and directfb lib
+	sprintf(plugin_socket_name, "/tmp/shm/dfbadapter-plugin.%d", dfb_prog_pid);
+	sprintf(dfb_socket_name, "/tmp/shm/dfbadapter-dfb.%d", dfb_prog_pid);
+	sprintf(dfb_primarymem_name, "/tmp/shm/dfbadapter.mem.%d", dfb_prog_pid);
+	sprintf(input_fifo_name, "/tmp/shm/dfbadapter-input.%d", dfb_prog_pid);
+	unlink(input_fifo_name);
+	unlink(dfb_primarymem_name);
+
+	//listen for directfb draw request event 
 	start_dfb_event_listener_thread();
 
+	// wait for input fifo file being created by directfb side
 	while ( (input_fifo_fd = open(input_fifo_name, O_WRONLY)) < 0 ) {
 		perror("open /tmp/shm/dfbadapter-input failed\n");
 		usleep(100);
