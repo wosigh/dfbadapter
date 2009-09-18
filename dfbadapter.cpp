@@ -55,6 +55,8 @@
 #include <sys/stat.h>
 #include <fcntl.h>
 #include <sys/mman.h>
+#include <signal.h>
+#include <sys/wait.h>
 
 #include "event.h"
 
@@ -112,6 +114,7 @@ struct MyObject : NPObject {
 	char			input_fifo_name[50];
 	
 	MyObject(NPP i);
+	~MyObject();
 
 	void start_dfb_event_listener_thread();
 	static void *dfb_event_listener_thread(void *);
@@ -135,19 +138,6 @@ int MyObject::exec_dfb_program(int argc, char **argv)
 	}	
 
 	if (pid == 0) {
-
-		/*char **dfb_args = (char**)alloca(sizeof(char*) * (argc+1));
-		if (!dfb_args) {
-			myprintf("alloca: no memory\n");
-			return -1;
-		}
-	
-		for (i=0; i<argc; i++) 
-			dfb_args[i] = argv[i+1];*/
-		/*dfb_args[i] = plugin_socket_name;
-		dfb_args[i+1] = dfb_socket_name;
-		dfb_args[i+2] = dfb_primarymem_name;*/
-		//dfb_args[i] = NULL;
 
 		if (execvp(argv[0], argv) < 0) {
 		//if (execlp("dfbterm", "dfbterm", "--size=40x20", "--fontsize=15", (char*)NULL) < 0) {
@@ -297,6 +287,7 @@ void MyObject::start_dfb_event_listener_thread()
 MyObject::MyObject(NPP i)
 :	instance(i),
 	window_received(false),
+	dfb_event_listener_tid(-1),
 	dfb_prog_pid(-1),
 	plugin_socket_fd(-1),
 	dfbmem_mapped(false),
@@ -335,6 +326,30 @@ MyObject::MyObject(NPP i)
 	}	
 	printf("plugin:		input fifo opened for write\n");
 }	
+
+MyObject::~MyObject()
+{
+	if (dfb_event_listener_tid) {
+		pthread_cancel(dfb_event_listener_tid);
+		void *thread_return = 0;
+		pthread_join(dfb_event_listener_tid, &thread_return);
+	}
+
+	kill(dfb_prog_pid, SIGKILL);
+	int ret_status;
+	waitpid(dfb_prog_pid, &ret_status, 0);
+
+	if(plugin_socket_fd)
+		close(plugin_socket_fd);
+
+	if(input_fifo_fd)
+		close(input_fifo_fd);
+	
+	unlink(dfb_primarymem_name);
+	unlink(dfb_socket_name);
+	unlink(plugin_socket_name);
+	unlink(input_fifo_name);
+}
 
 struct InstanceData {
 //  NPP npp;
